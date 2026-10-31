@@ -1,0 +1,45 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+venv/
+.venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+
+# Environment variables & secrets
+.env
+.env.*
+!.env.example
+
+# Compression archives
+*.zip
+*.tar.gz
+*.tgz
+*.rar
+
+# Dataset folders and raw packet captures (CIC-IDS2017)
+# Note: No blanket *.csv rule is used!
+data/
+data*/
+TrafficLabelling/
+MachineLearningCVE/
+GeneratedLabelledFlows/
+CSVs/
+*.pcap
+*.pcap_ISCX.csv
+
+# Keep run logs, feature tables, and evaluation summaries explicitly
+!R*_log.csv
+!R*_eval_features.csv
+!*_summary.json
+!latency_log.csv
+!latency_summary.json
+
+# Model binary artifacts (generated at runtime by harness)
+model/*.joblib
+!model/.gitkeep
