@@ -288,61 +288,60 @@ def aggregate_into_windows(
     flow_count, syn_rate, total_fwd_packets, total_bwd_packets, mean_flow_duration,
     mean_packet_length, unique_src_count, unique_dst_count, mean_total_packets.
     """
-    print(f"[*] Aggregating flows into windows of {window_seconds}s...")
-    min_time = flows_df["_epoch_sec"].min()
-    max_time = flows_df["_epoch_sec"].max()
+    min_time = float(flows_df["_epoch_sec"].min())
+    max_time = float(flows_df["_epoch_sec"].max())
 
     # Assign each flow to its window index relative to min_time
     flows_df["_window_idx"] = np.floor((flows_df["_epoch_sec"] - min_time) / window_seconds).astype(int)
 
-    def extract_window_features(group: pd.DataFrame) -> pd.Series:
-        w_idx = group["_window_idx"].iloc[0]
-        w_start = min_time + w_idx * window_seconds
-        w_end = w_start + window_seconds
+    grouped = flows_df.groupby("_window_idx")
 
-        flow_count = len(group)
-        syn_count = group[col_map["syn_flag"]].sum()
-        syn_rate = syn_count / float(window_seconds)
-        total_fwd = group[col_map["fwd_packets"]].sum()
-        total_bwd = group[col_map["bwd_packets"]].sum()
-        mean_dur = group[col_map["flow_duration"]].mean()
-        mean_len = group[col_map["packet_length"]].mean()
-        unique_src = group[col_map["source"]].nunique()
-        unique_dst = group[col_map["destination"]].nunique()
-        mean_tot_pkts = (group[col_map["fwd_packets"]] + group[col_map["bwd_packets"]]).mean()
+    flow_count = grouped.size()
+    syn_count = grouped[col_map["syn_flag"]].sum()
+    syn_rate = syn_count / float(window_seconds)
+    total_fwd = grouped[col_map["fwd_packets"]].sum()
+    total_bwd = grouped[col_map["bwd_packets"]].sum()
+    mean_dur = grouped[col_map["flow_duration"]].mean()
+    mean_len = grouped[col_map["packet_length"]].mean()
+    unique_src = grouped[col_map["source"]].nunique()
+    unique_dst = grouped[col_map["destination"]].nunique()
+    mean_tot_pkts = (total_fwd + total_bwd) / flow_count
 
-        # Window attack classification: True if any non-BENIGN flow overlaps this window
-        attack_mask = group["_label_clean"].str.upper() != "BENIGN"
-        is_attack = bool(attack_mask.any())
+    # Window attack classification: True if any non-BENIGN flow overlaps this window
+    is_attack_flow = flows_df["_label_clean"].str.upper() != "BENIGN"
+    attack_flows = flows_df[is_attack_flow]
+    attack_window_indices = set(attack_flows["_window_idx"].unique())
 
-        if is_attack:
-            # Most common attack type in this window
-            attack_type = group.loc[attack_mask, "_label_clean"].mode().iloc[0]
-        else:
-            attack_type = "BENIGN"
+    # Determine dominant attack type per attack window
+    attack_type_map = {}
+    if not attack_flows.empty:
+        attack_grouped = attack_flows.groupby(["_window_idx", "_label_clean"]).size().reset_index(name="count")
+        dominant = attack_grouped.sort_values(["_window_idx", "count"], ascending=[True, False]).drop_duplicates(subset=["_window_idx"])
+        attack_type_map = dict(zip(dominant["_window_idx"], dominant["_label_clean"]))
 
-        return pd.Series({
-            "window_idx": w_idx,
-            "window_start": w_start,
-            "window_end": w_end,
-            "flow_count": float(flow_count),
-            "syn_rate": float(syn_rate),
-            "total_fwd_packets": float(total_fwd),
-            "total_bwd_packets": float(total_bwd),
-            "mean_flow_duration": float(mean_dur),
-            "mean_packet_length": float(mean_len),
-            "unique_src_count": float(unique_src),
-            "unique_dst_count": float(unique_dst),
-            "mean_total_packets": float(mean_tot_pkts),
-            "is_attack": is_attack,
-            "attack_type": attack_type,
-        })
+    unique_windows = np.array(sorted(flows_df["_window_idx"].unique()), dtype=int)
+    w_start = min_time + unique_windows * window_seconds
+    w_end = w_start + window_seconds
 
-    windows_df = (
-        flows_df.groupby("_window_idx", group_keys=False)
-        .apply(extract_window_features)
-        .reset_index(drop=True)
-    )
+    is_attack = np.array([w in attack_window_indices for w in unique_windows], dtype=bool)
+    attack_type = [attack_type_map.get(w, "BENIGN") for w in unique_windows]
+
+    windows_df = pd.DataFrame({
+        "window_idx": unique_windows,
+        "window_start": w_start,
+        "window_end": w_end,
+        "flow_count": flow_count.loc[unique_windows].values.astype(float),
+        "syn_rate": syn_rate.loc[unique_windows].values.astype(float),
+        "total_fwd_packets": total_fwd.loc[unique_windows].values.astype(float),
+        "total_bwd_packets": total_bwd.loc[unique_windows].values.astype(float),
+        "mean_flow_duration": mean_dur.loc[unique_windows].values.astype(float),
+        "mean_packet_length": mean_len.loc[unique_windows].values.astype(float),
+        "unique_src_count": unique_src.loc[unique_windows].values.astype(float),
+        "unique_dst_count": unique_dst.loc[unique_windows].values.astype(float),
+        "mean_total_packets": mean_tot_pkts.loc[unique_windows].values.astype(float),
+        "is_attack": is_attack,
+        "attack_type": attack_type,
+    })
 
     windows_df = windows_df.sort_values(by="window_start").reset_index(drop=True)
     print(f"[*] Generated {len(windows_df):,} active traffic windows.")
